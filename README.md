@@ -168,13 +168,30 @@ PDF_OLLAMA_EMBED_MODEL=nomic-embed-text
 
 ---
 
-## WSL2 Performance Tips
+## Why ChromaDB?
 
-If running on Windows via WSL2:
+ChromaDB was chosen as the vector store for several practical reasons:
 
-- Store `chroma_data` on the **Linux filesystem** (e.g. `~/pdf_extractor/chroma_data`), not under `/mnt/c/`. Cross-filesystem I/O adds ~400ms per query.
-- Install Ollama via the **official installer** (`curl -fsSL https://ollama.com/install.sh | sh`), not via snap. The snap sandbox blocks GPU access.
-- With the above, Ollama runs fully on GPU.
+- **Embedded, zero-infrastructure** — runs in-process with no separate server to manage. Ideal for a local-first RAG tool where spinning up Postgres + pgvector or a hosted Pinecone instance would be overkill.
+- **Persistent by default** — a single `persist_directory` setting writes everything to disk. Restarts resume from the same state without re-ingesting.
+- **Native metadata filtering** — supports filtering by `source`, `page`, or any custom field at query time without post-processing, which is useful when you want to scope retrieval to a specific document.
+- **First-class Python SDK** — the client API maps directly to the domain interfaces (`upsert`, `query`, `delete`), keeping the `chroma_store.py` adapter thin (~80 lines).
+- **Upsert semantics** — re-ingesting the same PDF is safe and idempotent; duplicate chunks are overwritten, not duplicated.
+
+Alternatives considered: FAISS (no persistence layer, no metadata filtering), Qdrant (requires a running server), Pinecone (cloud-only, needs an API key).
+
+---
+
+## Why Sliding Window Chunking?
+
+Text is split using a sliding window (configurable `chunk_size` + `chunk_overlap`) rather than sentence or paragraph boundaries for the following reasons:
+
+- **Prevents context loss at boundaries** — a fixed sentence split can cut a key fact in half across two chunks. The overlap (`PDF_CHUNK_OVERLAP`, default 64 chars) guarantees that the tail of one chunk appears at the head of the next, so retrieval never misses a sentence that straddles a boundary.
+- **Predictable, uniform chunk sizes** — embedding models have a fixed token limit (~512 tokens for `all-MiniLM-L6-v2`). Fixed-size chunks ensure no single chunk ever exceeds the model's context window, which would silently truncate the text and degrade embedding quality.
+- **Works on raw extracted text** — PDF text extracted by PyMuPDF often lacks reliable paragraph/sentence delimiters (especially in scanned or multi-column layouts). Character-based sliding windows are robust to missing whitespace or malformed sentences.
+- **Simple and deterministic** — the chunking algorithm is ~20 lines with no NLP dependencies. It produces the same output for the same input every time, making ingestion reproducible and easy to test.
+
+The trade-off is that chunks don't align to semantic boundaries (sentences, paragraphs). For most factual Q&A tasks this doesn't matter — the retriever fetches the top-K chunks by cosine similarity, and the overlap ensures that any given fact appears fully in at least one chunk.
 
 ---
 
