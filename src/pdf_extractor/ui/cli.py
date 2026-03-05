@@ -15,7 +15,6 @@ logging.basicConfig(
 )
 
 from pdf_extractor.config.settings import get_settings
-from pdf_extractor.infrastructure.observability import setup_tracing
 
 
 def _build_dependencies():  # type: ignore[no-untyped-def]
@@ -36,10 +35,14 @@ def _build_dependencies():  # type: ignore[no-untyped-def]
         persist_path=settings.chroma_persist_path,
         collection_name=settings.chroma_collection_name,
     )
-    llm = OllamaLLMService(
-        model=settings.ollama_model,
-        base_url=settings.ollama_base_url,
-    )
+    if settings.openai_api_key:
+        from pdf_extractor.infrastructure.openai_llm import OpenAILLMService
+        llm = OpenAILLMService(api_key=settings.openai_api_key, model=settings.openai_model)
+    else:
+        llm = OllamaLLMService(
+            model=settings.ollama_model,
+            base_url=settings.ollama_base_url,
+        )
 
     if settings.embedding_backend == "ollama":
         from pdf_extractor.infrastructure.ollama_embedder import OllamaEmbeddingService
@@ -58,12 +61,6 @@ def _build_dependencies():  # type: ignore[no-untyped-def]
 @click.pass_context
 def main(ctx: click.Context) -> None:
     """PDF Extractor — RAG-powered PDF question-answering."""
-    settings = get_settings()
-    setup_tracing(
-        service_name=settings.otel_service_name,
-        endpoint=settings.phoenix_collector_endpoint,
-        enabled=settings.otel_enabled,
-    )
     ctx.ensure_object(dict)
 
 

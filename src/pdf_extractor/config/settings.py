@@ -5,7 +5,7 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _DEFAULT_PROMPT = (
@@ -34,9 +34,16 @@ class AppSettings(BaseSettings):
     chroma_persist_path: Path = Field(default=Path.home() / "pdf_extractor" / "chroma_data")
     chroma_collection_name: str = Field(default="pdf_chunks")
 
+    # OpenAI (optional — if set, takes priority over Ollama for generation)
+    openai_api_key: str = Field(
+        default="",
+        validation_alias=AliasChoices("TEAMIFIED_OPENAI_API_KEY", "PDF_OPENAI_API_KEY"),
+    )
+    openai_model: str = Field(default="gpt-4o-mini")
+
     # Ollama
     ollama_base_url: str = Field(default="http://localhost:11434")
-    ollama_model: str = Field(default="llama3.2")
+    ollama_model: str = Field(default="qwen3:4b")
     ollama_embed_model: str = Field(default="nomic-embed-text")
 
     # Embedding
@@ -49,11 +56,6 @@ class AppSettings(BaseSettings):
 
     # Retrieval
     retrieval_top_k: int = Field(default=5, gt=0)
-
-    # Observability
-    phoenix_collector_endpoint: str = Field(default="http://localhost:4317")
-    otel_enabled: bool = Field(default=True)
-    otel_service_name: str = Field(default="pdf-extractor")
 
     # RAG prompt template
     rag_prompt_template: str = Field(default=_DEFAULT_PROMPT)

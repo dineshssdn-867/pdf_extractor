@@ -18,7 +18,6 @@ from pdf_extractor.application.ingest_use_case import IngestUseCase
 from pdf_extractor.application.query_use_case import QueryUseCase
 from pdf_extractor.config.settings import get_settings
 from pdf_extractor.infrastructure.chroma_store import ChromaVectorStore
-from pdf_extractor.infrastructure.ollama_llm import OllamaLLMService
 from pdf_extractor.infrastructure.pdf_loader import PyMuPDFDocumentLoader
 from pdf_extractor.infrastructure.text_chunker import SlidingWindowChunker
 
@@ -27,7 +26,13 @@ _settings = get_settings()
 _loader = PyMuPDFDocumentLoader()
 _chunker = SlidingWindowChunker(chunk_size=_settings.chunk_size, chunk_overlap=_settings.chunk_overlap)
 _vector_store = ChromaVectorStore(persist_path=_settings.chroma_persist_path, collection_name=_settings.chroma_collection_name)
-_llm = OllamaLLMService(model=_settings.ollama_model, base_url=_settings.ollama_base_url)
+
+if _settings.openai_api_key:
+    from pdf_extractor.infrastructure.openai_llm import OpenAILLMService
+    _llm = OpenAILLMService(api_key=_settings.openai_api_key, model=_settings.openai_model)
+else:
+    from pdf_extractor.infrastructure.ollama_llm import OllamaLLMService
+    _llm = OllamaLLMService(model=_settings.ollama_model, base_url=_settings.ollama_base_url)
 
 if _settings.embedding_backend == "ollama":
     from pdf_extractor.infrastructure.ollama_embedder import OllamaEmbeddingService

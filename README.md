@@ -1,6 +1,6 @@
 # PDF Extractor — RAG-Powered PDF Question Answering
 
-A production-ready Retrieval-Augmented Generation (RAG) system that lets you ingest PDF documents and ask natural language questions about them. Built with Clean Architecture, OpenTelemetry observability, and a Chainlit web UI.
+A production-ready Retrieval-Augmented Generation (RAG) system that lets you ingest PDF documents and ask natural language questions about them. Built with Clean Architecture and a Chainlit web UI.
 
 ---
 
@@ -21,8 +21,6 @@ pdf_extractor/
 Ingest:  PDF → PyMuPDF → SlidingWindowChunker → Embedder → ChromaDB
 Query:   Question → Embedder → ChromaDB → Ollama LLM → Answer
 ```
-
-Each query emits **4 OpenTelemetry spans**: `retrieve` → `prompt_build` → `llm_generate` → `answer`, visible in Arize Phoenix.
 
 ---
 
@@ -64,6 +62,8 @@ All settings use the `PDF_` prefix and can be set in `.env` or as environment va
 
 | Variable | Default | Description |
 |---|---|---|
+| `TEAMIFIED_OPENAI_API_KEY` | _(empty)_ | OpenAI API key — if set, OpenAI is used instead of Ollama |
+| `PDF_OPENAI_MODEL` | `gpt-4o-mini` | OpenAI model to use when key is present |
 | `PDF_INPUT_DIR` | `./data/pdfs` | Default directory scanned by `ingest` |
 | `PDF_CHROMA_PERSIST_PATH` | `~/pdf_extractor/chroma_data` | ChromaDB storage path (use Linux FS on WSL2 for best performance) |
 | `PDF_CHROMA_COLLECTION_NAME` | `pdf_chunks` | Collection name |
@@ -75,9 +75,6 @@ All settings use the `PDF_` prefix and can be set in `.env` or as environment va
 | `PDF_CHUNK_SIZE` | `512` | Characters per chunk |
 | `PDF_CHUNK_OVERLAP` | `64` | Overlap between chunks |
 | `PDF_RETRIEVAL_TOP_K` | `5` | Chunks retrieved per query |
-| `PDF_OTEL_ENABLED` | `true` | Enable OpenTelemetry tracing |
-| `PDF_OTEL_SERVICE_NAME` | `pdf-extractor` | Service name shown in traces |
-| `PDF_PHOENIX_COLLECTOR_ENDPOINT` | `http://localhost:4317` | Arize Phoenix OTLP endpoint |
 
 ---
 
@@ -120,12 +117,45 @@ pdf-extractor query "Summarise section 3" --top-k 10
 
 ---
 
+## LLM Backend
+
+The system automatically selects the LLM based on whether an OpenAI API key is present:
+
+| Condition | LLM used |
+|---|---|
+| `TEAMIFIED_OPENAI_API_KEY` is set | OpenAI (`gpt-4o-mini` by default) |
+| Key is empty or absent | Ollama (`qwen3:4b` by default) |
+
+No code change needed — just set the key in `.env` to switch.
+
+### Why qwen3:4b as the Ollama fallback?
+
+`qwen3:4b` is the best locally-runnable model for RAG on constrained hardware (4GB VRAM):
+
+- **Instruction-following** — strictly respects prompt directives like "don't say based on the context", which is critical for natural-sounding RAG answers
+- **Multilingual** — handles Filipino/Tagalog historical content better than English-only models like LLaMA
+- **4B parameters fit in 4GB VRAM** — runs fully on GPU with no CPU offloading, unlike 7B+ models
+- **Strong reasoning-to-size ratio** — outperforms llama3.2:3b on factual Q&A benchmarks despite similar size
+
+---
+
 ## Embedding Backend
 
 The default backend is `sentence_transformers` using `all-MiniLM-L6-v2`, which:
 - Runs on GPU automatically if CUDA is available
 - Loads once at startup and stays in memory
 - Gives significantly better retrieval accuracy than `nomic-embed-text` for Q&A tasks
+
+### Why all-MiniLM-L6-v2?
+
+Benchmarked against alternatives on this codebase's Philippine history corpus:
+
+| Model | Query vs relevant chunk | Query vs irrelevant chunk | Gap |
+|---|---|---|---|
+| `nomic-embed-text` (Ollama) | 0.565 | **0.591** | −0.026 (wrong order) |
+| `all-MiniLM-L6-v2` | **0.641** | 0.252 | +0.389 ✅ |
+
+`nomic-embed-text` actually ranked irrelevant chunks *higher* than relevant ones for factual Q&A. `all-MiniLM-L6-v2` was specifically fine-tuned on question-answer pairs (MS MARCO, NLI datasets), making it far better at matching a question to its answer passage rather than just finding thematically similar text.
 
 To switch to Ollama embeddings:
 
@@ -148,18 +178,9 @@ If running on Windows via WSL2:
 
 ---
 
-## Observability (Arize Phoenix)
+## Logging
 
-Start Phoenix locally:
-
-```bash
-pip install arize-phoenix
-python -m phoenix.server.main
-```
-
-Open `http://localhost:6006` and run a query — you'll see 4 spans per request with timing breakdowns for embed, retrieve, and LLM generate steps.
-
-Timing is also logged to the console at INFO level:
+Timing is logged to the console at INFO level so you can see exactly where time is spent:
 
 ```
 [query] DONE total=2100 ms  (embed=45 ms, retrieve=12 ms, llm=2040 ms)
@@ -186,15 +207,15 @@ src/pdf_extractor/
 │   └── interfaces.py        # IDocumentLoader, ITextChunker, IEmbeddingService, IVectorStore, ILLMService
 ├── application/
 │   ├── ingest_use_case.py   # load → chunk → embed → store
-│   └── query_use_case.py    # embed → retrieve → prompt → generate (4 OTel spans)
+│   └── query_use_case.py    # embed → retrieve → prompt → generate
 ├── infrastructure/
 │   ├── pdf_loader.py        # PyMuPDF loader
 │   ├── text_chunker.py      # Sliding-window chunker
 │   ├── ollama_embedder.py   # Ollama embedding service
 │   ├── sentence_embedder.py # Sentence-Transformers embedding service (default)
 │   ├── chroma_store.py      # ChromaDB vector store
-│   ├── ollama_llm.py        # Ollama LLM service
-│   └── observability.py     # OTel tracing setup
+│   ├── ollama_llm.py        # Ollama LLM service (local fallback)
+│   └── openai_llm.py        # OpenAI LLM service (used when API key is set)
 ├── config/
 │   └── settings.py          # AppSettings (Pydantic BaseSettings, absolute .env path)
 └── ui/

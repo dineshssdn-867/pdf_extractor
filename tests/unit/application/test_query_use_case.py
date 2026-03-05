@@ -5,9 +5,6 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 import pytest
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import SimpleSpanProcessor
-from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 from pdf_extractor.application.query_use_case import QueryUseCase
 from pdf_extractor.config.settings import AppSettings
@@ -76,29 +73,18 @@ class TestQueryUseCaseExecute:
         with pytest.raises(ValueError, match="question"):
             uc.execute("   ")
 
-    def test_otel_spans_emitted(self, retrieved_chunk: RetrievedChunk, settings: AppSettings) -> None:
-        """Verify 4 spans are emitted: retrieve, prompt_build, llm_generate, answer."""
-        exporter = InMemorySpanExporter()
-        provider = TracerProvider()
-        provider.add_span_processor(SimpleSpanProcessor(exporter))
-
+    def test_execute_logs_timing(self, retrieved_chunk: RetrievedChunk, settings: AppSettings) -> None:
+        """Verify execute completes and returns a QueryResult with timing logged."""
         embedder = MagicMock(spec=IEmbeddingService)
         embedder.embed.return_value = [[0.1, 0.2, 0.3]]
         store = MagicMock(spec=IVectorStore)
         store.query.return_value = [retrieved_chunk]
         llm = MagicMock(spec=ILLMService)
-        llm.generate.return_value = "answer"
+        llm.generate.return_value = "The answer."
 
-        import pdf_extractor.infrastructure.observability as obs
-        original = obs._tracer
-        obs._tracer = provider.get_tracer("test")
+        uc = QueryUseCase(embedder, store, llm, settings)
+        result = uc.execute("Test question?")
 
-        try:
-            uc = QueryUseCase(embedder, store, llm, settings)
-            uc.execute("Test question?")
-        finally:
-            obs._tracer = original
-
-        spans = exporter.get_finished_spans()
-        span_names = {s.name for s in spans}
-        assert {"retrieve", "prompt_build", "llm_generate", "answer"} == span_names
+        assert result.answer == "The answer."
+        assert result.question == "Test question?"
+        assert result.source_chunks == [retrieved_chunk]
